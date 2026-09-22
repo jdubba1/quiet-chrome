@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 export const flag = "--silent-debugger-extension-api";
-export const bundleId = "sh.jimbo.chrome-quiet";
+export const bundleId = "sh.jimbo.quiet-chrome";
 export const run = (file, args) =>
   execFileSync(file, args, {
     encoding: "utf8",
@@ -22,7 +22,7 @@ const shellQuote = (s) => "'" + s.replaceAll("'", "'\\''") + "'";
 const appleString = (s) =>
   '"' + s.replaceAll("\\", "\\\\").replaceAll('"', '\\"') + '"';
 export const launcherPath = (home = homedir()) =>
-  join(home, "Applications", "Chrome Quiet.app");
+  join(home, "Applications", "Quiet Chrome.app");
 const plistPath = (app) => join(app, "Contents", "Info.plist");
 
 export function findChrome(home = homedir()) {
@@ -46,7 +46,7 @@ export function launcherScript(chrome) {
     if chromeProcesses is not "" then
         repeat with chromeProcess in paragraphs of chromeProcesses
             if chromeProcess does not contain ${appleString(flag)} then
-                display dialog "Chrome is already running without the quiet flag. Quit Chrome with Command-Q, then open Chrome Quiet again. Your current session has not been interrupted." buttons {"OK"} default button "OK" with title "Chrome Quiet"
+                display dialog "Chrome is already running without the quiet flag. Quit Chrome with Command-Q, then open Quiet Chrome again. Your current session has not been interrupted." buttons {"OK"} default button "OK" with title "Quiet Chrome"
                 return
             end if
         end repeat
@@ -82,7 +82,7 @@ function refuseForeign(app, exec) {
   }
   if (stat.isSymbolicLink() || !isOwned(app, exec)) {
     throw new Error(
-      `Refusing to change ${app}: it was not installed by chrome-quiet. Move or rename it first.`,
+      `Refusing to change ${app}: it was not installed by quiet-chrome. Move or rename it first.`,
     );
   }
 }
@@ -95,8 +95,8 @@ export function install({
   const app = launcherPath(home);
   refuseForeign(app, exec);
   mkdirSync(join(home, "Applications"), { recursive: true });
-  const staging = mkdtempSync(join(home, "Applications", ".chrome-quiet-"));
-  const built = join(staging, "Chrome Quiet.app");
+  const staging = mkdtempSync(join(home, "Applications", ".quiet-chrome-"));
+  const built = join(staging, "Quiet Chrome.app");
   const backup = join(staging, "previous.app");
   let movedOld = false;
   try {
@@ -109,14 +109,14 @@ export function install({
     ]);
     exec("/usr/libexec/PlistBuddy", [
       "-c",
-      "Set :CFBundleIconFile ChromeQuiet.icns",
+      "Set :CFBundleIconFile QuietChrome.icns",
       plist,
     ]);
     // The generated asset catalog otherwise overrides CFBundleIconFile.
     exec("/usr/libexec/PlistBuddy", ["-c", "Delete :CFBundleIconName", plist]);
     copyFileSync(
       join(chrome, "Contents", "Resources", "app.icns"),
-      join(built, "Contents", "Resources", "ChromeQuiet.icns"),
+      join(built, "Contents", "Resources", "QuietChrome.icns"),
     );
     exec("/usr/bin/codesign", ["--force", "--sign", "-", built]);
     exec("/usr/bin/codesign", ["--verify", built]);
@@ -159,7 +159,7 @@ export function doctor({ home = homedir(), exec = run } = {}) {
   }
   const app = launcherPath(home);
   lines.push(
-    `Launcher: ${isOwned(app, exec) ? app : "not installed by chrome-quiet"}`,
+    `Launcher: ${isOwned(app, exec) ? app : "not installed by quiet-chrome"}`,
   );
   let pids;
   try {
@@ -168,7 +168,7 @@ export function doctor({ home = homedir(), exec = run } = {}) {
     if (error.status !== 1) throw error;
   }
   if (!pids)
-    lines.push("Chrome is not running. Open Chrome Quiet to start it.");
+    lines.push("Chrome is not running. Open Quiet Chrome to start it.");
   else {
     const processes = pids
       .split(/\s+/)
@@ -179,7 +179,7 @@ export function doctor({ home = homedir(), exec = run } = {}) {
     lines.push(
       quiet
         ? "Quiet flag: active on all Chrome processes."
-        : "Quiet flag: missing. Quit Chrome with Command-Q, then open Chrome Quiet.",
+        : "Quiet flag: missing. Quit Chrome with Command-Q, then open Quiet Chrome.",
     );
   }
   lines.push(

@@ -23,7 +23,7 @@ import {
 } from "../src/launcher.js";
 
 function fixture(t) {
-  const home = mkdtempSync(join(tmpdir(), "chrome-quiet-test-"));
+  const home = mkdtempSync(join(tmpdir(), "quiet-chrome-test-"));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const chrome = join(home, "Chrome.app");
   mkdirSync(join(chrome, "Contents", "Resources"), { recursive: true });
@@ -52,7 +52,7 @@ test("install copies the local icon, signs before replacing, and is safely repea
   const app = install(f);
   assert.equal(
     readFileSync(
-      join(app, "Contents", "Resources", "ChromeQuiet.icns"),
+      join(app, "Contents", "Resources", "QuietChrome.icns"),
       "utf8",
     ),
     "icon",

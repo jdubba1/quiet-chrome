@@ -1,10 +1,10 @@
 {
-  "name": "chrome-quiet",
+  "name": "quiet-chrome",
   "version": "0.1.0",
   "description": "A macOS launcher for your existing Chrome, without the extension debugging banner.",
   "type": "module",
   "bin": {
-    "chrome-quiet": "bin/chrome-quiet.js"
+    "quiet-chrome": "bin/quiet-chrome.js"
   },
   "engines": {
     "node": ">=20"
@@ -20,13 +20,13 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/chrome-quiet.js && node --check src/launcher.js && npm test"
+    "check": "node --check bin/quiet-chrome.js && node --check src/launcher.js && npm test"
   },
   "license": "MIT",
   "author": "jdubba1",
-  "repository": "github:jdubba1/chrome-quiet",
-  "homepage": "https://jimbo.sh/chrome-quiet",
-  "bugs": "https://github.com/jdubba1/chrome-quiet/issues",
+  "repository": "github:jdubba1/quiet-chrome",
+  "homepage": "https://jimbo.sh/quiet-chrome",
+  "bugs": "https://github.com/jdubba1/quiet-chrome/issues",
   "keywords": [
     "chrome",
     "macos",

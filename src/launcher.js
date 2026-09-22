@@ -7,9 +7,17 @@ import {
   copyFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
+import {
+  configPath,
+  readConfig,
+  validateConfig,
+  writeConfig,
+} from "./config.js";
 
 export const flag = "--silent-debugger-extension-api";
 export const bundleId = "sh.jimbo.quiet-chrome";
@@ -18,12 +26,27 @@ export const run = (file, args) =>
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
-const shellQuote = (s) => "'" + s.replaceAll("'", "'\\''") + "'";
-const appleString = (s) =>
-  '"' + s.replaceAll("\\", "\\\\").replaceAll('"', '\\"') + '"';
 export const launcherPath = (home = homedir()) =>
   join(home, "Applications", "Quiet Chrome.app");
+export const loginPath = (home = homedir()) =>
+  join(home, "Library", "LaunchAgents", `${bundleId}.login.plist`);
 const plistPath = (app) => join(app, "Contents", "Info.plist");
+const helperPath = (app) =>
+  join(app, "Contents", "MacOS", "quiet-chrome-helper");
+const nativeBinary = fileURLToPath(
+  new URL("../native/quiet-chrome-helper", import.meta.url),
+);
+const xml = (s) =>
+  s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+const plist = (body) =>
+  `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>${body}</dict></plist>\n`;
+const string = (key, value) =>
+  `<key>${key}</key><string>${xml(value)}</string>`;
 
 export function findChrome(home = homedir()) {
   const app = [
@@ -35,25 +58,6 @@ export function findChrome(home = homedir()) {
       "Google Chrome was not found in /Applications or ~/Applications. Install Chrome first.",
     );
   return app;
-}
-
-export function launcherScript(chrome) {
-  // No Apple Events are sent to Chrome. Only inspect its process and use Launch Services.
-  const processCheck =
-    "/usr/bin/pgrep -x 'Google Chrome' | while IFS= read -r pid; do /bin/ps -p \"$pid\" -o command=; done; true";
-  return `on run
-    set chromeProcesses to do shell script ${appleString(processCheck)}
-    if chromeProcesses is not "" then
-        repeat with chromeProcess in paragraphs of chromeProcesses
-            if chromeProcess does not contain ${appleString(flag)} then
-                display dialog "Chrome is already running without the quiet flag. Quit Chrome with Command-Q, then open Quiet Chrome again. Your current session has not been interrupted." buttons {"OK"} default button "OK" with title "Quiet Chrome"
-                return
-            end if
-        end repeat
-    end if
-    do shell script ${appleString("/usr/bin/open -a " + shellQuote(chrome) + " --args " + flag)}
-end run
-`;
 }
 
 export function isOwned(app, exec = run) {
@@ -72,7 +76,6 @@ export function isOwned(app, exec = run) {
 }
 
 function refuseForeign(app, exec) {
-  // lstat also catches broken symlinks, which existsSync alone does not.
   let stat;
   try {
     stat = lstatSync(app);
@@ -80,40 +83,147 @@ function refuseForeign(app, exec) {
     if (error.code === "ENOENT") return;
     throw error;
   }
-  if (stat.isSymbolicLink() || !isOwned(app, exec)) {
+  if (stat.isSymbolicLink() || !isOwned(app, exec))
     throw new Error(
       `Refusing to change ${app}: it was not installed by quiet-chrome. Move or rename it first.`,
     );
+}
+
+function checkLoginOwnership(home, exec) {
+  const path = loginPath(home);
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
   }
+  if (
+    stat.isSymbolicLink() ||
+    exec("/usr/libexec/PlistBuddy", ["-c", "Print :QuietChromeOwner", path]) !==
+      bundleId
+  ) {
+    throw new Error(`Refusing to change unrelated login item: ${path}`);
+  }
+}
+
+function removeLogin(home, exec) {
+  checkLoginOwnership(home, exec);
+  const path = loginPath(home);
+  if (!existsSync(path)) return;
+  // RunAtLoad jobs may have already exited. bootout prevents another start this session.
+  try {
+    exec("/bin/launchctl", [
+      "bootout",
+      `gui/${process.getuid()}/${bundleId}.login`,
+    ]);
+  } catch (error) {
+    if (![3, 113].includes(error.status)) throw error;
+  }
+  rmSync(path);
+}
+
+export function syncSettings(config, { home = homedir(), exec = run } = {}) {
+  const app = launcherPath(home);
+  if (!isOwned(app, exec)) {
+    if (!config.startAtLogin) removeLogin(home, exec);
+    return;
+  }
+  checkLoginOwnership(home, exec);
+  if (config.startAtLogin) {
+    const path = loginPath(home);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      plist(
+        string("Label", bundleId + ".login") +
+          string("QuietChromeOwner", bundleId) +
+          `<key>ProgramArguments</key><array><string>${xml(helperPath(app))}</string><string>--background</string></array><key>RunAtLoad</key><true/>`,
+      ),
+      { mode: 0o600 },
+    );
+  } else removeLogin(home, exec);
+  if (existsSync(helperPath(app))) {
+    exec(helperPath(app), [
+      config.dockMode === "standard" ? "--stop" : "--reload",
+    ]);
+    if (config.dockMode === "auto") {
+      let running = true;
+      try {
+        exec(helperPath(app), ["--is-running"]);
+      } catch (error) {
+        if (error.status !== 1) throw error;
+        running = false;
+      }
+      if (!running)
+        exec("/usr/bin/open", ["-g", "-a", app, "--args", "--background"]);
+    }
+  }
+}
+
+export function configure(config, { home = homedir(), exec = run } = {}) {
+  const validated = validateConfig(config);
+  checkLoginOwnership(home, exec);
+  const app = launcherPath(home);
+  if (isOwned(app, exec) && !existsSync(helperPath(app))) {
+    throw new Error(
+      "This launcher predates Dock modes. Run quiet-chrome install to upgrade it first.",
+    );
+  }
+  const previous = readConfig(home);
+  writeConfig(validated, home);
+  try {
+    syncSettings(validated, { home, exec });
+  } catch (error) {
+    writeConfig(previous, home);
+    try {
+      syncSettings(previous, { home, exec });
+    } catch {
+      /* Preserve the original failure. */
+    }
+    throw error;
+  }
+  return validated;
 }
 
 export function install({
   home = homedir(),
   chrome = findChrome(home),
   exec = run,
+  config = readConfig(home),
+  binary = nativeBinary,
 } = {}) {
+  config = validateConfig(config);
   const app = launcherPath(home);
   refuseForeign(app, exec);
+  checkLoginOwnership(home, exec);
   mkdirSync(join(home, "Applications"), { recursive: true });
   const staging = mkdtempSync(join(home, "Applications", ".quiet-chrome-"));
   const built = join(staging, "Quiet Chrome.app");
   const backup = join(staging, "previous.app");
   let movedOld = false;
+  let installedNew = false;
+  const previousConfig = readConfig(home);
+  const hadConfig = existsSync(configPath(home));
   try {
-    exec("/usr/bin/osacompile", ["-o", built, "-e", launcherScript(chrome)]);
-    const plist = plistPath(built);
-    exec("/usr/libexec/PlistBuddy", [
-      "-c",
-      `Add :CFBundleIdentifier string ${bundleId}`,
-      plist,
-    ]);
-    exec("/usr/libexec/PlistBuddy", [
-      "-c",
-      "Set :CFBundleIconFile QuietChrome.icns",
-      plist,
-    ]);
-    // The generated asset catalog otherwise overrides CFBundleIconFile.
-    exec("/usr/libexec/PlistBuddy", ["-c", "Delete :CFBundleIconName", plist]);
+    mkdirSync(join(built, "Contents", "MacOS"), { recursive: true });
+    mkdirSync(join(built, "Contents", "Resources"));
+    copyFileSync(binary, helperPath(built));
+    writeFileSync(
+      plistPath(built),
+      plist(
+        string("CFBundleIdentifier", bundleId) +
+          string("CFBundleName", "Quiet Chrome") +
+          string("CFBundleExecutable", "quiet-chrome-helper") +
+          string("CFBundlePackageType", "APPL") +
+          string("CFBundleIconFile", "QuietChrome.icns") +
+          string("CFBundleVersion", "0.2.0") +
+          string("LSMinimumSystemVersion", "13.0") +
+          string("QuietChromePath", chrome) +
+          string("QuietChromeConfigPath", configPath(home)) +
+          `<key>LSUIElement</key><true/>`,
+      ),
+    );
     copyFileSync(
       join(chrome, "Contents", "Resources", "app.icns"),
       join(built, "Contents", "Resources", "QuietChrome.icns"),
@@ -121,21 +231,37 @@ export function install({
     exec("/usr/bin/codesign", ["--force", "--sign", "-", built]);
     exec("/usr/bin/codesign", ["--verify", built]);
     refuseForeign(app, exec);
+    if (existsSync(helperPath(app))) exec(helperPath(app), ["--stop"]);
     if (existsSync(app)) {
       renameSync(app, backup);
       movedOld = true;
     }
-    try {
-      renameSync(built, app);
-    } catch (error) {
-      if (movedOld) {
-        renameSync(backup, app);
-        movedOld = false;
+    renameSync(built, app);
+    installedNew = true;
+    writeConfig(config, home);
+    syncSettings(config, { home, exec });
+  } catch (error) {
+    if (installedNew) {
+      try {
+        exec(helperPath(app), ["--stop"]);
+      } catch {
+        /* Keep rollback available. */
       }
-      throw error;
+      rmSync(app, { recursive: true, force: true });
+      if (hadConfig) writeConfig(previousConfig, home);
+      else rmSync(configPath(home), { force: true });
     }
+    if (movedOld) {
+      renameSync(backup, app);
+      movedOld = false;
+    }
+    try {
+      syncSettings(previousConfig, { home, exec });
+    } catch {
+      /* Preserve the original failure. */
+    }
+    throw error;
   } finally {
-    // If a rollback itself fails, preserve the previous app for recovery.
     if (!movedOld || existsSync(app))
       rmSync(staging, { recursive: true, force: true });
   }
@@ -145,6 +271,9 @@ export function install({
 export function uninstall({ home = homedir(), exec = run } = {}) {
   const app = launcherPath(home);
   refuseForeign(app, exec);
+  checkLoginOwnership(home, exec);
+  if (existsSync(helperPath(app))) exec(helperPath(app), ["--stop"]);
+  removeLogin(home, exec);
   if (!existsSync(app)) return false;
   rmSync(app, { recursive: true });
   return true;
@@ -161,6 +290,15 @@ export function doctor({ home = homedir(), exec = run } = {}) {
   lines.push(
     `Launcher: ${isOwned(app, exec) ? app : "not installed by quiet-chrome"}`,
   );
+  if (isOwned(app, exec) && existsSync(helperPath(app)))
+    lines.push(exec(helperPath(app), ["--status"]));
+  const config = readConfig(home);
+  lines.push(
+    `Config: ${configPath(home)}`,
+    `Dock mode: ${config.dockMode}`,
+    `Start at login: ${config.startAtLogin}`,
+    `Login file: ${existsSync(loginPath(home)) ? "present" : "absent"}`,
+  );
   let pids;
   try {
     pids = exec("/usr/bin/pgrep", ["-x", "Google Chrome"]);
@@ -173,11 +311,8 @@ export function doctor({ home = homedir(), exec = run } = {}) {
     const processes = pids
       .split(/\s+/)
       .map((pid) => exec("/bin/ps", ["-p", pid, "-o", "command="]));
-    const quiet = processes.every((command) =>
-      command.split(/\s+/).includes(flag),
-    );
     lines.push(
-      quiet
+      processes.every((command) => command.split(/\s+/).includes(flag))
         ? "Quiet flag: active on all Chrome processes."
         : "Quiet flag: missing. Quit Chrome with Command-Q, then open Quiet Chrome.",
     );

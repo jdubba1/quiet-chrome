@@ -1,6 +1,6 @@
 {
   "name": "quiet-chrome",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A macOS launcher for your existing Chrome, without the extension debugging banner.",
   "type": "module",
   "bin": {
@@ -16,11 +16,14 @@
     "bin/",
     "src/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "native/QuietChrome.swift",
+    "native/quiet-chrome-helper"
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/quiet-chrome.js && node --check src/launcher.js && npm test"
+    "check": "node --check bin/quiet-chrome.js && node --check src/launcher.js && node --check src/config.js && node --check src/options.js && npm test",
+    "build:native": "node scripts/build-native.mjs"
   },
   "license": "MIT",
   "author": "jdubba1",
